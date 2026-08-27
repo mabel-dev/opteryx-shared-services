@@ -22,6 +22,15 @@ is imported by name::
     from opteryx_shared_services.audit import AuditMiddleware
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version
+
+try:
+    # Read from the installed distribution rather than restated here, so the
+    # one place a version is written is pyproject.toml. A second copy is a
+    # second thing to forget, which is the failure this package exists to fix.
+    __version__ = version("opteryx-shared-services")
+except PackageNotFoundError:  # running from a source checkout, not installed
+    __version__ = "0.0.0+source"
 
 __all__ = ["__version__"]
