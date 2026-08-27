@@ -106,11 +106,14 @@ logger = get_logger()
 __all__ = [
     "CheckResult",
     "DependencyUnavailable",
+    "PROBE_TIMEOUT_SECONDS",
     "Preflight",
     "custom",
     "firestore_read",
+    "gcp_project",
     "gcs_list",
     "gcs_write",
+    "get_config",
     "secret_manager",
 ]
 
@@ -180,7 +183,7 @@ def project_id() -> Optional[str]:
     )
 
 
-def _project() -> Optional[str]:
+def gcp_project() -> Optional[str]:
     """The GCP project the probes report against.
 
     Falls back to whatever ADC resolved, because Cloud Run sets none of
@@ -188,6 +191,10 @@ def _project() -> Optional[str]:
     google-cloud clients get theirs from the metadata server via ADC, and asking
     the auth layer is cheaper than constructing a service client just to read
     the project off it.
+
+    Public because a `custom` probe usually needs it -- a Cloud Tasks queue path
+    or a Pub/Sub topic is built from the project, and leaving services to work
+    that out individually is how eight different answers happen.
     """
     explicit = project_id()
     if explicit:
@@ -261,7 +268,7 @@ def secret_manager(name: str = "secret-manager", secret_key: str = "HEALTH_CHECK
     def probe() -> CheckResult:
         from google.api_core import exceptions as api_exceptions
 
-        project = _project()
+        project = gcp_project()
         if not project:
             return CheckResult(name, False, "no GCP project could be determined")
 

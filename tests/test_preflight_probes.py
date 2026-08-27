@@ -191,7 +191,7 @@ def test_a_list_denial_is_not_a_failure(monkeypatch):
     `secrets.list` -- failing on that would ground a healthy service."""
     from google.api_core import exceptions as api_exceptions
 
-    monkeypatch.setattr(preflight, "_project", lambda: "opteryx-prod")
+    monkeypatch.setattr(preflight, "gcp_project", lambda: "opteryx-prod")
 
     class _Client:
         def list_secrets(self, request, timeout=None):
@@ -207,7 +207,7 @@ def test_a_list_denial_is_not_a_failure(monkeypatch):
 
 def test_a_named_secret_is_read_when_configured(config, monkeypatch):
     config(HEALTH_CHECK_SECRET="GITHUB_TOKEN")
-    monkeypatch.setattr(preflight, "_project", lambda: "opteryx-prod")
+    monkeypatch.setattr(preflight, "gcp_project", lambda: "opteryx-prod")
     requested = {}
 
     class _Payload:
@@ -230,6 +230,6 @@ def test_a_named_secret_is_read_when_configured(config, monkeypatch):
 
 
 def test_without_a_project_the_secret_check_fails(monkeypatch):
-    monkeypatch.setattr(preflight, "_project", lambda: None)
+    monkeypatch.setattr(preflight, "gcp_project", lambda: None)
 
     assert not preflight.secret_manager()().ok
