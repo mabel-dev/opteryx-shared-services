@@ -14,6 +14,7 @@ repos and had silently diverged there:
 | `opteryx_shared_services.config` | the platform configuration client |
 | `opteryx_shared_services.logging` | structured logging, and the audit wire format the fleet's log ingestion selects on |
 | `opteryx_shared_services.preflight` | startup dependency checks that fail a Cloud Run revision rather than letting an instance that cannot serve replace one that can |
+| `opteryx_shared_services.audit` | request audit middleware, and the payload shape the fleet's log ingestion reads |
 
 Nothing is imported by the top-level package. A service that needs only
 configuration must not pay for a Firestore, GCS or Secret Manager import it
@@ -113,6 +114,58 @@ audit pipeline could not see:
 Adopting this module therefore **starts new records flowing** into
 `ops.audit_log` from five services. Validate their payloads against
 `AUDIT_LOG_SCHEMA` before rolling out.
+
+## `audit`
+
+```python
+from opteryx_shared_services.audit import AuditMiddleware
+
+service.add_middleware(AuditMiddleware)
+```
+
+Ten fields, the same for every service — `method`, `path`, `status`,
+`duration_ms`, `from`, `timestamp`, `detail`, `jwt_present`/`jwt_sub`, and
+`client_ip`/`user_agent`/`host`. The eight implementations this replaces had
+diverged into eight payload shapes with only the first six in common, so
+`ops.audit_log` could be joined on very little.
+
+`from` is `x-forwarded-for` — what a proxy claims. `client_ip` is the peer the
+server actually saw. They differ exactly when it matters.
+
+### Why pure ASGI, not `BaseHTTPMiddleware`
+
+`BaseHTTPMiddleware.call_next()` returns as soon as the status and headers are
+captured — it cannot see whether the body finished streaming. A response that
+started as a clean 200 and then died mid-stream (compression crash, worker OOM,
+dropped connection) was audited as a plain `200 okay`, indistinguishable from a
+full success, because the record was written before the body was ever sent.
+**Seven of the eight services had that defect.**
+
+This wraps `send` directly, tracking bytes actually written and whether the
+stream was cleanly terminated, and reports a distinct detail when it was not.
+It also re-raises rather than swallowing exceptions into a synthetic empty
+Response, so Starlette's `ServerErrorMiddleware` produces a real error.
+
+An exception reaching the middleware is *not* by itself a truncation —
+`ServerErrorMiddleware` renders a complete 500 and then re-raises, and calling
+that a transport failure would misdescribe a client that got a whole, correct
+error response. Only an unterminated stream is reported as one.
+
+### Extension points
+
+Rather than forking the payload:
+
+- `request.state.audit_extra = {...}` — any route may set this while handling
+  the request; it is merged into the record. This is how a handler reports what
+  it did without the middleware knowing anything about that route.
+- `AuditMiddleware(app, extra_fields=fn)` — a callable taking the `Request`,
+  for values derived from the request or environment.
+
+Neither may overwrite a standard field, and a raising `extra_fields` is logged
+and ignored: an incomplete audit record beats no record, and beats a 500 caused
+by the auditing itself.
+
+Needs the `web` extra (`starlette`).
 
 ## `preflight`
 
@@ -216,8 +269,10 @@ Only the config client's Firestore dependency is unconditional. The preflight
 probes import their clients lazily, inside the probe that needs them:
 
 ```bash
-pip install "opteryx-shared-services[storage,secrets]"
+pip install "opteryx-shared-services[storage,secrets,web]"
 ```
+
+`web` is `starlette`, needed only by `audit`.
 
 ## Releasing
 
@@ -227,6 +282,6 @@ Tag `version-<pyproject version>`. The workflow gates on the full test matrix
 ## Tests
 
 ```bash
-python -m pip install -e ".[test,storage,secrets]"
+python -m pip install -e ".[test,storage,secrets,web]"
 python -m pytest tests -q
 ```

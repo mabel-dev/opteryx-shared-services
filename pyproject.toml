@@ -39,7 +39,10 @@ dependencies = [
 # surface it declares checks for, and so CI exercises all of them.
 storage = ["google-cloud-storage==3.*"]
 secrets = ["google-cloud-secret-manager==2.*"]
-test = ["pytest"]
+# `audit` is ASGI middleware, so it needs starlette -- but only that module
+# does, and a service importing only `config` must not pull a web framework.
+web = ["starlette>=0.37"]
+test = ["pytest", "starlette>=0.37", "httpx"]
 
 [tool.setuptools.packages.find]
 include = ["opteryx_shared_services*"]
