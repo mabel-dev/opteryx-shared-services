@@ -233,3 +233,38 @@ def test_without_a_project_the_secret_check_fails(monkeypatch):
     monkeypatch.setattr(preflight, "gcp_project", lambda: None)
 
     assert not preflight.secret_manager()().ok
+
+
+# --- bucket name fallback ---------------------------------------------------
+
+
+def test_the_first_configured_bucket_key_wins(config, monkeypatch):
+    """upload resolves `DATA_BUCKET or GCS_BUCKET`; a probe pinned to one of
+    them either fails when the fallback is in use, or proves the wrong bucket."""
+    config(GCS_BUCKET="opteryx-data")
+    client = _FakeStorage(listed=[])
+    monkeypatch.setattr(preflight, "_storage_client", lambda: client)
+
+    result = preflight.gcs_list("gcs-data", bucket_key=("DATA_BUCKET", "GCS_BUCKET"))()
+
+    assert result.ok
+    assert client.list_args[0] == "opteryx-data"
+    # The detail names which key answered, so an operator is not left guessing.
+    assert "GCS_BUCKET" in result.detail
+
+
+def test_an_earlier_key_takes_precedence(config, monkeypatch):
+    config(DATA_BUCKET="explicit-data", GCS_BUCKET="opteryx-data")
+    client = _FakeStorage(listed=[])
+    monkeypatch.setattr(preflight, "_storage_client", lambda: client)
+
+    preflight.gcs_list("gcs-data", bucket_key=("DATA_BUCKET", "GCS_BUCKET"))()
+
+    assert client.list_args[0] == "explicit-data"
+
+
+def test_none_configured_names_every_key_it_looked_at():
+    result = preflight.gcs_write("gcs-data", bucket_key=("DATA_BUCKET", "GCS_BUCKET"))()
+
+    assert not result.ok
+    assert "DATA_BUCKET" in result.detail and "GCS_BUCKET" in result.detail

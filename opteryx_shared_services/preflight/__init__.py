@@ -336,7 +336,31 @@ def firestore_read(
     return _probe(name, probe)
 
 
-def gcs_list(name: str, bucket_key: str):
+def _resolve_bucket(bucket_key) -> Tuple[Optional[str], Optional[str]]:
+    """The first of `bucket_key` that is actually configured.
+
+    A service often names its bucket with a fallback -- upload resolves
+    `DATA_BUCKET or GCS_BUCKET` -- and a probe pinned to one of them either
+    fails when the fallback is in use, or proves the wrong bucket. Passing the
+    same ordered list the service itself resolves keeps the probe honest about
+    which bucket the work will actually touch.
+
+    Returns `(key, bucket)`, so the detail can say which key answered.
+    """
+    keys = (bucket_key,) if isinstance(bucket_key, str) else tuple(bucket_key)
+    for key in keys:
+        value = get_config(key)
+        if value:
+            return key, str(value)
+    return None, None
+
+
+def _not_configured(name: str, bucket_key) -> CheckResult:
+    keys = (bucket_key,) if isinstance(bucket_key, str) else tuple(bucket_key)
+    return CheckResult(name, False, f"none of {' / '.join(keys)} is configured")
+
+
+def gcs_list(name: str, bucket_key):
     """A bucket the service READS is listable.
 
     A LIST, not a `bucket.exists()`: the latter needs `storage.buckets.get`,
@@ -345,21 +369,21 @@ def gcs_list(name: str, bucket_key: str):
     """
 
     def probe() -> CheckResult:
-        bucket = get_config(bucket_key)
+        key, bucket = _resolve_bucket(bucket_key)
         if not bucket:
-            return CheckResult(name, False, f"{bucket_key} is not configured")
+            return _not_configured(name, bucket_key)
         blobs = _storage_client().list_blobs(bucket, max_results=1, timeout=PROBE_TIMEOUT_SECONDS)
         found = next(iter(blobs), None)
         return CheckResult(
             name,
             True,
-            f"listed gs://{bucket} ({'not empty' if found is not None else 'empty'})",
+            f"listed gs://{bucket} from {key} ({'not empty' if found is not None else 'empty'})",
         )
 
     return _probe(name, probe)
 
 
-def gcs_write(name: str, bucket_key: str):
+def gcs_write(name: str, bucket_key):
     """A bucket the service WRITES is writable.
 
     A real object write, because for a write-only bucket that is the only thing
@@ -376,9 +400,9 @@ def gcs_write(name: str, bucket_key: str):
     """
 
     def probe() -> CheckResult:
-        bucket_name = get_config(bucket_key)
+        key, bucket_name = _resolve_bucket(bucket_key)
         if not bucket_name:
-            return CheckResult(name, False, f"{bucket_key} is not configured")
+            return _not_configured(name, bucket_key)
 
         blob = _storage_client().bucket(bucket_name).blob(f"{PROBE_PREFIX}{uuid.uuid4().hex}")
         blob.upload_from_string(
@@ -394,7 +418,9 @@ def gcs_write(name: str, bucket_key: str):
                 f"health probe wrote gs://{bucket_name}/{blob.name} but could not delete it: "
                 f"{type(exc).__name__}: {exc} -- consider a lifecycle rule on {PROBE_PREFIX}"
             )
-        return CheckResult(name, True, f"wrote and removed an object in gs://{bucket_name}")
+        return CheckResult(
+            name, True, f"wrote and removed an object in gs://{bucket_name} (from {key})"
+        )
 
     return _probe(name, probe)
 

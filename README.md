@@ -238,6 +238,11 @@ probe runs, because configuration is promoted into `os.environ` during startup â
 a value captured at import can be older than the one the rest of the process is
 using.
 
+`bucket_key` also accepts an ordered list, for a service that resolves its
+bucket with a fallback â€” `bucket_key=("DATA_BUCKET", "GCS_BUCKET")` probes the
+first one configured, and the detail names which key answered. Pass the same
+order the service itself resolves, or the probe proves the wrong bucket.
+
 **Declare the direction the service uses, not both.** A LIST is not a substitute
 for a CREATE and vice versa: a service account holding `objectCreator` on a
 results bucket (enough to serve every request) fails a read probe, and one
