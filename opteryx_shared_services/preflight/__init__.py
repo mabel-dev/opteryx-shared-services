@@ -126,7 +126,11 @@ PROBE_TIMEOUT_SECONDS = 5.0
 # RPC (ADC discovery, metadata server) never reaches the per-call timeout.
 OVERALL_TIMEOUT_SECONDS = 15.0
 
-CACHE_TTL_SECONDS = 30.0
+# How long a probe result stands. The floor is set by abuse (`/health` is
+# unauthenticated, so this is what stops a curl loop billing the project);
+# the ceiling by how stale an answer may be before "can I serve" is a guess
+# rather than a fact. It also bounds alert repeats -- see `readiness`.
+CACHE_TTL_SECONDS = 300.0
 
 # Firestore document read by the probes. It is not expected to exist -- a get on
 # a missing document is a successful read, and requires exactly the permission
