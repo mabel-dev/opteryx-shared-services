@@ -108,7 +108,12 @@ _DEFAULT_LOG_NAME = "opteryx"
 # WARNING, not the service's own level: `config_client` logs a line per key the
 # first time each resolves, which is a dozen lines of "resolved from default" on
 # every instance start and says nothing once a service is working.
-_ADOPTED_LOGGERS = ("opteryx.config_client", "opteryx_catalog")
+#   opteryx                - the query engine. Its modules log under their own
+#                            dotted names (opteryx.connectors.parquet_io...), so
+#                            the package root is adopted: an engine failure whose
+#                            user-facing message says "the cause has been
+#                            logged" must actually reach the service's log.
+_ADOPTED_LOGGERS = ("opteryx", "opteryx.config_client", "opteryx_catalog")
 _ADOPTED_LEVEL = logging.WARNING
 
 # Set per request by the audit middleware from the inbound
@@ -261,12 +266,21 @@ def _adopt(handler: logging.Handler, names: Iterable[str]) -> None:
     Same handler, same format, their own `record.name` -- so a line's origin
     stays readable and a library warning cannot go out unformatted through
     Python's last-resort handler.
+
+    Adopted loggers do not propagate: `opteryx.config_client` sits under the
+    adopted `opteryx`, and propagating would emit its lines twice.
+
+    A logger that already has handlers is left alone entirely -- with the
+    default service name the service's own logger IS `opteryx`, and its level
+    is the service's, not `_ADOPTED_LEVEL`.
     """
     for name in names:
         adopted = logging.getLogger(name)
+        if adopted.handlers:
+            continue
         adopted.setLevel(_ADOPTED_LEVEL)
-        if not adopted.handlers:
-            adopted.addHandler(handler)
+        adopted.addHandler(handler)
+        adopted.propagate = False
 
 
 def get_logger(name: Optional[str] = None) -> logging.Logger:

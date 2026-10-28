@@ -222,6 +222,39 @@ def test_third_party_warnings_are_adopted_rather_than_lost(logger_streams):
         assert adopted.level == logging.WARNING
 
 
+def test_an_engine_error_reaches_the_service_log_once(logger_streams):
+    """The engine logs a failure's cause under its module's own name and tells
+    the user "the cause has been logged" -- that line must land in the service's
+    log, formatted, and exactly once (opteryx.config_client sits under the
+    adopted `opteryx` and must not echo through it)."""
+    for name in slogging._ADOPTED_LOGGERS:
+        logging.getLogger(name).handlers.clear()
+
+    _, ordinary, _ = logger_streams("t.wiring.engine")
+
+    logging.getLogger("opteryx.connectors.parquet_io.pool_reader").error(
+        "Parquet pipeline error: %s", "Decode failed for column 'a': EOF"
+    )
+    logging.getLogger("opteryx.config_client").warning("config unreadable")
+
+    lines = ordinary.getvalue().splitlines()
+    assert sum("Decode failed for column 'a': EOF" in line for line in lines) == 1
+    assert sum("config unreadable" in line for line in lines) == 1
+    assert any("opteryx.connectors.parquet_io.pool_reader" in line for line in lines)
+
+
+def test_a_service_named_opteryx_keeps_its_own_level(logger_streams):
+    """With the default name the service's logger IS `opteryx`; adoption must
+    not drop it to WARNING."""
+    for name in slogging._ADOPTED_LOGGERS:
+        logging.getLogger(name).handlers.clear()
+
+    logger, _, _ = logger_streams("opteryx", LOGGING_LEVEL="20")
+
+    assert logger.level == logging.INFO
+    assert len(logger.handlers) == 2
+
+
 def test_reconfiguring_does_not_reset_a_level_a_caller_has_set(logger_streams):
     """Callers adjust the level after the first `get_logger()` and expect it to
     stick -- worker.opteryx sets it to 5."""
