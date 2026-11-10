@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "opteryx-shared-services"
-version = "0.2.4"
+version = "0.3.0"
 description = "Shared capabilities for Opteryx platform services"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [
     { name = "joocer", email = "justin.joyce@joocer.com" }
 ]
 license = { file = "LICENSE" }
-keywords = ["opteryx", "config", "logging", "preflight", "healthcheck"]
+keywords = ["opteryx", "config", "logging", "preflight", "healthcheck", "billing"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

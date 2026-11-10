@@ -15,6 +15,7 @@ repos and had silently diverged there:
 | `opteryx_shared_services.logging` | structured logging, and the audit wire format the fleet's log ingestion selects on |
 | `opteryx_shared_services.preflight` | startup dependency checks that fail a Cloud Run revision rather than letting an instance that cannot serve replace one that can |
 | `opteryx_shared_services.audit` | request audit middleware, and the payload shape the fleet's log ingestion reads |
+| `opteryx_shared_services.billing` | the billing rules every query front door enforces: the effective plan, the suspended/spend-cap block, and the free tier's daily allowance |
 
 Nothing is imported by the top-level package. A service that needs only
 configuration must not pay for a Firestore, GCS or Secret Manager import it
@@ -166,6 +167,33 @@ and ignored: an incomplete audit record beats no record, and beats a 500 caused
 by the auditing itself.
 
 Needs the `web` extra (`starlette`).
+
+## `billing`
+
+```python
+from opteryx_shared_services.billing import allowance, block, plans
+```
+
+The rules jobs, Flight and OData apply before running a query, so the doors
+cannot disagree about an account. A divergence here is not cosmetic: it
+enforces an account against limits it does not have, or lets one daily
+allowance be spent once at each door. These were hand-copied into four repos
+within a day of being written.
+
+| module | provides |
+| --- | --- |
+| `plans` | `effective_plan(account_id, account)` - the plan in force. The stored `plan` field is intent; never read it directly. |
+| `accounts` | `cached_account(account_id, client_factory)` - the `billing_accounts/{id}` read, cached for a minute and shared by the checks below |
+| `block` | `check(account_id, client_factory)` - `payment_failed` / `spend_cap_reached` / None, and the `MESSAGES` to refuse with |
+| `allowance` | the free tier's daily allowance: standard rate cards, the `billing_accounts/{account}/usage/{YYYYMMDD}` counter, `decide`, `count_admission`, `add_bytes` |
+
+Rules and Firestore reads/writes only. Where a check sits in the request path
+and how a refusal is reported (a 402, a `FlightUnauthorizedError`) stay with
+each service, and every Firestore call takes the caller's client, so this
+package never chooses a project or database. Every check fails open.
+
+The commercial model is control.opteryx's `docs/design/rate-cards.md`; the
+standard cards in `allowance` must match the live `platform.pricing.rate_card`.
 
 ## `preflight`
 
