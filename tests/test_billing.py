@@ -108,7 +108,11 @@ def test_block_check_reads_once_and_fails_open():
         ("free", INDIVIDUAL, ua.Usage(bytes_processed=int(0.99 * GB)), None),
         ("free", INDIVIDUAL, ua.Usage(bytes_processed=GB), ua.REASON_PROCESSED),
         ("free", INDIVIDUAL, ua.Usage(queries=500, bytes_processed=10 * GB), ua.REASON_QUERIES),
-        ("free", ACCOUNT, ua.Usage(queries=10_000, bytes_processed=10 * GB), None),
+        # A card-less account is `free` on the account card: capped at 5x, not billed.
+        ("free", ACCOUNT, ua.Usage(queries=499, bytes_processed=int(4.99 * GB)), None),
+        ("free", ACCOUNT, ua.Usage(queries=500), ua.REASON_QUERIES),
+        ("free", ACCOUNT, ua.Usage(bytes_processed=5 * GB), ua.REASON_PROCESSED),
+        ("payg", ACCOUNT, ua.Usage(queries=10_000, bytes_processed=10 * GB), None),
         ("payg", INDIVIDUAL, ua.Usage(queries=10_000), None),
         ("prepaid", INDIVIDUAL, ua.Usage(queries=10_000), None),
         ("house", INDIVIDUAL, ua.Usage(queries=10_000), None),
@@ -122,7 +126,7 @@ def test_decide(plan, card, usage, reason):
 def test_standard_cards_match_the_live_rate_card():
     """1 GB/day individual, 5 GB/day account - as platform.pricing.rate_card since 2026-11-10."""
     assert ua.daily_allowances(INDIVIDUAL) == {"queries": 100, "bytes_processed": GB}
-    assert ua.daily_allowances(ACCOUNT) == {"queries": None, "bytes_processed": None}
+    assert ua.daily_allowances(ACCOUNT) == {"queries": 500, "bytes_processed": 5 * GB}
     assert ACCOUNT[ua.METER_PROCESSED]["included_units"] == 5.0
 
 
@@ -155,6 +159,21 @@ def test_card_selection():
     assert ua.card_id_for("free", None) == ua.STANDARD_INDIVIDUAL
     assert ua.card_id_for("payg", {}) == ua.STANDARD_ACCOUNT
     assert ua.card_id_for("free", {"rate_card_id": "trial-2026"}) == "trial-2026"
+
+
+def test_cardless_account_is_capped_at_the_account_allowance():
+    # A billing account with no payment method resolves to `free` (it cannot be
+    # charged) but is still the 5x tier: capped at 500/5 GB, never billed.
+    account = {"plan": "payg", "payment_method": None}
+    plan = ua.effective_plan("acct_1", account)
+    assert plan == "free"
+    card_id = ua.card_id_for(plan, account)
+    assert card_id == ua.STANDARD_ACCOUNT
+    card = ua.STANDARD_CARDS[card_id]
+    assert ua.daily_allowances(card) == {"queries": 500, "bytes_processed": 5_000_000_000}
+    assert ua.decide(plan, card, ua.Usage(queries=499, bytes_processed=0), NOON) is None
+    refusal = ua.decide(plan, card, ua.Usage(queries=500, bytes_processed=0), NOON)
+    assert refusal is not None and refusal.reason == ua.REASON_QUERIES
 
 
 @pytest.mark.parametrize("raw, mode", [(None, "enforce"), ("SHADOW", "shadow"), (" off ", "off"), ("x", "enforce")])

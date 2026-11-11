@@ -123,14 +123,19 @@ def seconds_until_reset(now: Optional[datetime.datetime] = None) -> int:
 
 
 def card_id_for(plan: str, account: Optional[dict]) -> str:
-    """A negotiated card if the account carries one, else the standard card its plan selects.
+    """A negotiated card if the account carries one, else the standard card for its tier.
 
-    Same COALESCE rate-cards.md's `charges_daily` join uses.
+    Same COALESCE rate-cards.md's `charges_daily` join uses. The tier is whether
+    a billing account EXISTS, not the plan: an account with no payment method
+    resolves to `free` (it cannot be charged) but is still the 5x
+    `standard-account` tier - it is capped at those allowances rather than
+    billed past them (see `decide`). Only an identity with no account document
+    (`account is None`) gets `standard-individual`.
     """
     negotiated = (account or {}).get("rate_card_id")
     if isinstance(negotiated, str) and negotiated:
         return negotiated
-    return STANDARD_INDIVIDUAL if plan == PLAN_FREE else STANDARD_ACCOUNT
+    return STANDARD_INDIVIDUAL if account is None else STANDARD_ACCOUNT
 
 
 def read_card(db, card_id: str) -> dict:
@@ -182,10 +187,16 @@ def read_usage(db, account_id: str, day: str) -> Usage:
 
 
 def _allowance(meter: dict) -> Optional[float]:
-    """The meter's daily allowance in the counter's own units, or None if it does not block."""
+    """The meter's daily allowance in the counter's own units, or None if it has none.
+
+    Only read on the `free` plan, where nothing can be billed - so every daily
+    allowance is a cap there, whatever the card's `on_exceed` says. `bill` on
+    `standard-account` describes the chargeable case; ignoring the allowance
+    because of it would leave a card-less account uncapped AND unbilled.
+    """
     if not isinstance(meter, dict):
         return None
-    if meter.get("on_exceed") != "block" or meter.get("allowance_basis") != "daily_total":
+    if meter.get("allowance_basis") != "daily_total":
         return None
     try:
         units = float(meter.get("included_units"))
@@ -273,7 +284,10 @@ def add_bytes(db, account_id: str, day: str, nbytes: int) -> None:
 
 
 def daily_allowances(card: dict) -> dict:
-    """`{"queries": n | None, "bytes_processed": n | None}` - None where the card does not block."""
+    """`{"queries": n | None, "bytes_processed": n | None}` - None where the card has no daily allowance.
+
+    For the free plan, where every daily allowance blocks (see `_allowance`).
+    """
     queries = _allowance(card.get(METER_QUERIES))
     processed = _allowance(card.get(METER_PROCESSED))
     return {
