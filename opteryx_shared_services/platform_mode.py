@@ -31,7 +31,14 @@ upload     all          --          --      --
 flight     all          reads       --      --
 odata      all          reads       --      --
 control    all          --          --      --
+xb500      all          reads       --      --
 =========  ===========  ==========  ======  =======
+
+xb500 is the scheduled housekeeping service: it lands logs, records billing,
+compacts and expires datasets and reclaims storage, all directly on the
+platform. Its scheduled runs are refused outside ``operational`` (or, in
+``read_only``, anything that writes); Cloud Scheduler's next run does the work
+once the mode allows it.
 
 ``queue`` holds work only where there is a queue to hold it in: jobs accepts the
 submission and the worker leaves it pending. Flight, odata, upload and control
@@ -119,7 +126,8 @@ UPLOAD = "upload"
 FLIGHT = "flight"
 ODATA = "odata"
 CONTROL = "control"
-SERVICES = (JOBS, WORKER, UPLOAD, FLIGHT, ODATA, CONTROL)
+XB500 = "xb500"
+SERVICES = (JOBS, WORKER, UPLOAD, FLIGHT, ODATA, CONTROL, XB500)
 
 _ALL = frozenset(OPERATIONS)
 _READS = frozenset({READ})
@@ -133,6 +141,7 @@ ALLOWED: dict[str, dict[str, frozenset]] = {
     FLIGHT: {OPERATIONAL: _ALL, READ_ONLY: _READS, REJECT: _NONE, QUEUE: _NONE},
     ODATA: {OPERATIONAL: _ALL, READ_ONLY: _READS, REJECT: _NONE, QUEUE: _NONE},
     CONTROL: {OPERATIONAL: _ALL, READ_ONLY: _NONE, REJECT: _NONE, QUEUE: _NONE},
+    XB500: {OPERATIONAL: _ALL, READ_ONLY: _READS, REJECT: _NONE, QUEUE: _NONE},
 }
 
 MESSAGES = {
@@ -412,6 +421,7 @@ __all__ = [
     "UPLOAD",
     "WORKER",
     "WRITE",
+    "XB500",
     "allowed",
     "check",
     "current",

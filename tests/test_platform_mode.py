@@ -97,6 +97,8 @@ R, W = pm.READ, pm.WRITE
         (pm.UPLOAD, pm.READ_ONLY, W, False),
         (pm.CONTROL, pm.READ_ONLY, R, False),
         (pm.CONTROL, pm.READ_ONLY, W, False),
+        (pm.XB500, pm.READ_ONLY, R, True),
+        (pm.XB500, pm.READ_ONLY, W, False),
         # reject: nothing, anywhere
         *[(s, pm.REJECT, op, False) for s in pm.SERVICES for op in (R, W)],
         # queue: only jobs accepts; the worker holds it
