@@ -16,6 +16,7 @@ repos and had silently diverged there:
 | `opteryx_shared_services.preflight` | startup dependency checks that fail a Cloud Run revision rather than letting an instance that cannot serve replace one that can |
 | `opteryx_shared_services.audit` | request audit middleware, and the payload shape the fleet's log ingestion reads |
 | `opteryx_shared_services.billing` | the billing rules every query front door enforces: the effective plan, the suspended/spend-cap block, and the free tier's daily allowance |
+| `opteryx_shared_services.platform_mode` | the platform maintenance switch (`operational` / `read_only` / `reject` / `queue`) and the one matrix of what each service refuses in each mode |
 
 Nothing is imported by the top-level package. A service that needs only
 configuration must not pay for a Firestore, GCS or Secret Manager import it
