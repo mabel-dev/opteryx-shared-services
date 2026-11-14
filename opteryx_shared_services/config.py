@@ -1,7 +1,7 @@
 """Client for Opteryx platform configuration.
 
-Configuration lives in Firestore at ``(default)/config/<environment>``, one
-document per environment (in practice the GCP project the service runs in).
+Configuration lives in Firestore at ``<CONFIG_DATABASE>/config/<environment>``,
+one document per environment (in practice the GCP project the service runs in).
 This client reads that document directly.
 
 Resolution hierarchy for every lookup:
@@ -41,6 +41,9 @@ Environment:
 - ``CONFIG_PROJECT`` — the GCP project whose Firestore holds the configuration
   document. Defaults to the service's own project, which is correct whenever
   the service reads the configuration for the project it runs in.
+- ``CONFIG_DATABASE`` — the Firestore database holding the configuration
+  document. Defaults to ``(default)``. Read once at import, from the process's
+  own environment only: the document cannot name its own location.
 - ``OPTERYX_CONFIG_EAGER`` — set to ``false`` to skip the read at import.
 - ``OPTERYX_CONFIG_PROMOTE`` — set to ``false`` to skip the copy into
   ``os.environ`` at import.
@@ -66,7 +69,9 @@ CACHE_TTL_SECONDS = 300.0
 READ_TIMEOUT_SECONDS = 10.0
 
 COLLECTION = "config"
-DATABASE = "(default)"
+# Bound at import, before `promote_to_environ` runs, so a `CONFIG_DATABASE` in
+# the document can never redirect the read it came from.
+DATABASE = os.environ.get("CONFIG_DATABASE") or "(default)"
 
 _UNSET = object()
 

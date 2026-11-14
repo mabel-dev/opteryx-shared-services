@@ -865,3 +865,26 @@ def test_an_undetected_environment_is_not_latched(monkeypatch):
     monkeypatch.setenv("OPTERYX_ENVIRONMENT", "arrived-late")
 
     assert client.environment == "arrived-late"
+
+
+def test_config_database_comes_from_the_process_environment():
+    """`CONFIG_DATABASE` picks the database at import; unset means `(default)`."""
+    import subprocess
+    import sys
+
+    probe = "from opteryx_shared_services import config; print(config.DATABASE)"
+    base = {**os.environ, "OPTERYX_CONFIG_EAGER": "false", "OPTERYX_CONFIG_PROMOTE": "false"}
+    base.pop("CONFIG_DATABASE", None)
+    named = subprocess.run([sys.executable, "-c", probe], env={**base, "CONFIG_DATABASE": "config"},
+                           capture_output=True, text=True, check=True)
+    unset = subprocess.run([sys.executable, "-c", probe], env=base, capture_output=True, text=True, check=True)
+    assert named.stdout.strip() == "config"
+    assert unset.stdout.strip() == "(default)"
+
+
+def test_named_config_database_is_passed_to_the_client(monkeypatch):
+    monkeypatch.setattr(opteryx_config, "DATABASE", "config")
+    client = ConfigClient(environment="env", project="proj")
+    with mock.patch("google.cloud.firestore.Client") as factory:
+        client._client()
+    factory.assert_called_once_with(project="proj", database="config")
