@@ -20,8 +20,16 @@ No reservations are taken, so nothing here can lock an account out by leaking
 one - the cost is that queries in flight at once can overshoot the data
 allowance by what they process.
 
-Refusal is on ALREADY being at an allowance, never on a prediction of what the
-next query will cost (see jobs.opteryx ``docs/design/billing-enforcement.md``).
+Two refusals. ALREADY at an allowance - no prediction involved. And, when the
+caller passes the statement's billed bytes (``query_bytes``), a query that would
+take today's processed bytes PAST the data allowance. That second one exists
+because the figure is exact, not an estimate: opteryx measures ``billing_bytes``
+on the final logical plan, so planning a statement before running it gives the
+number the run is billed (jobs.opteryx ``app/query_estimate.py``). The design
+doc's earlier "never on a prediction" (jobs.opteryx
+``docs/design/billing-enforcement.md``) was about a loose upper bound and no
+longer applies to this figure. A door that cannot plan omits ``query_bytes``
+and keeps the at-most-one-query overshoot.
 
 Limits come from the rate card projection ``rate_cards/{rate_card_id}`` that
 control.opteryx is to write; until it exists, the standard cards below - which
@@ -94,6 +102,9 @@ STANDARD_CARDS = {
 
 REASON_QUERIES = "daily_query_allowance"
 REASON_PROCESSED = "daily_data_allowance"
+# This query, not the account, is over: the account still has allowance left,
+# just not this much of it.
+REASON_QUERY_PROCESSED = "query_exceeds_data_allowance"
 
 CARD_CACHE_TTL_SECONDS = 300
 _card_cache: dict[str, tuple[float, dict]] = {}
@@ -218,14 +229,20 @@ def _format_gb(nbytes: float) -> str:
 
 
 def decide(
-    plan: str, card: dict, usage: Usage, now: Optional[datetime.datetime] = None
+    plan: str,
+    card: dict,
+    usage: Usage,
+    now: Optional[datetime.datetime] = None,
+    query_bytes: Optional[int] = None,
 ) -> Optional[Refusal]:
     """Whether to refuse a submission. Pure: no IO.
 
     Only `free` is capped by a daily allowance. `payg` and `house` are uncapped;
     `prepaid` is capped by its credit balance, which is not enforced here.
-    Refuses when the account is ALREADY at an allowance - never on a prediction
-    of what this query will cost (see the design doc for why).
+    Refuses when the account is ALREADY at an allowance, or - given
+    `query_bytes`, the statement's plan-time billed bytes - when this query
+    would take today's processed bytes past it. Without `query_bytes` an account
+    can overshoot by one query, as before.
     """
     if plan != PLAN_FREE:
         return None
@@ -253,6 +270,23 @@ def decide(
                 f"Daily data allowance used: your queries have processed "
                 f"{_format_gb(usage.bytes_processed)} GB of today's "
                 f"{_format_gb(allowed_bytes)} GB free allowance. {resets} {lift}"
+            ),
+            retry_after=retry_after,
+        )
+
+    if (
+        allowed_bytes is not None
+        and query_bytes is not None
+        and usage.bytes_processed + query_bytes > allowed_bytes
+    ):
+        left = max(0, allowed_bytes - usage.bytes_processed)
+        return Refusal(
+            reason=REASON_QUERY_PROCESSED,
+            message=(
+                f"This query would process {_format_gb(query_bytes)} GB, but only "
+                f"{_format_gb(left)} GB of today's {_format_gb(allowed_bytes)} GB free "
+                f"data allowance is left. Select fewer columns or filter on a "
+                f"partitioned column to process less. {resets} {lift}"
             ),
             retry_after=retry_after,
         )

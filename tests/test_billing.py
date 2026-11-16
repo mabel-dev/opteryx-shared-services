@@ -123,6 +123,37 @@ def test_decide(plan, card, usage, reason):
     assert (refusal.reason if refusal else None) == reason
 
 
+@pytest.mark.parametrize(
+    "usage, query_bytes, reason",
+    [
+        # No figure: the old rule, one query's overshoot allowed.
+        (ua.Usage(bytes_processed=2 * GB), None, None),
+        (ua.Usage(bytes_processed=2 * GB), 3 * GB, None),  # lands exactly on it
+        (ua.Usage(bytes_processed=2 * GB), 3 * GB + 1, ua.REASON_QUERY_PROCESSED),
+        (ua.Usage(bytes_processed=2 * GB), 22 * GB, ua.REASON_QUERY_PROCESSED),
+        (ua.Usage(), 6 * GB, ua.REASON_QUERY_PROCESSED),  # bigger than a whole day
+        (ua.Usage(), 0, None),
+        # Already over still says so, not "this query".
+        (ua.Usage(bytes_processed=5 * GB), 1, ua.REASON_PROCESSED),
+        (ua.Usage(queries=500), 1, ua.REASON_QUERIES),
+    ],
+)
+def test_decide_on_the_query_figure(usage, query_bytes, reason):
+    refusal = ua.decide("free", ACCOUNT, usage, NOON, query_bytes=query_bytes)
+    assert (refusal.reason if refusal else None) == reason
+
+
+def test_the_query_figure_never_refuses_a_paying_plan():
+    assert ua.decide("payg", ACCOUNT, ua.Usage(), NOON, query_bytes=100 * GB) is None
+
+
+def test_query_refusal_says_how_much_and_how_much_is_left():
+    refusal = ua.decide("free", ACCOUNT, ua.Usage(bytes_processed=2 * GB), NOON, query_bytes=22 * GB)
+    assert "would process 22.0 GB" in refusal.message
+    assert "only 3 GB of today's 5 GB" in refusal.message
+    assert refusal.retry_after == 12 * 3600
+
+
 def test_standard_cards_match_the_live_rate_card():
     """1 GB/day individual, 5 GB/day account - as platform.pricing.rate_card since 2026-11-10."""
     assert ua.daily_allowances(INDIVIDUAL) == {"queries": 100, "bytes_processed": GB}
