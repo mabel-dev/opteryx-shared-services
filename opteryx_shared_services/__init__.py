@@ -16,6 +16,8 @@ had silently diverged there:
   tier's daily allowance.
 - ``opteryx_shared_services.platform_mode`` -- the maintenance switch every
   service reads, and the matrix of what each one refuses in each mode.
+- ``opteryx_shared_services.usernames`` -- the username rule: which names may
+  be created, and the lowercase form they are stored and compared as.
 
 Nothing is imported here. A service that needs only configuration must not pay
 for a Firestore, GCS or Secret Manager import it never uses, so each capability
@@ -27,6 +29,7 @@ is imported by name::
     from opteryx_shared_services.audit import AuditMiddleware
     from opteryx_shared_services.billing import allowance, block, plans
     from opteryx_shared_services import platform_mode
+    from opteryx_shared_services.usernames import validate_username
 """
 
 from importlib.metadata import PackageNotFoundError
