@@ -103,19 +103,16 @@ def test_block_check_reads_once_and_fails_open():
     "plan, card, usage, reason",
     [
         ("free", INDIVIDUAL, ua.Usage(), None),
-        ("free", INDIVIDUAL, ua.Usage(queries=99), None),
-        ("free", INDIVIDUAL, ua.Usage(queries=100), ua.REASON_QUERIES),
         ("free", INDIVIDUAL, ua.Usage(bytes_processed=int(0.99 * GB)), None),
         ("free", INDIVIDUAL, ua.Usage(bytes_processed=GB), ua.REASON_PROCESSED),
-        ("free", INDIVIDUAL, ua.Usage(queries=500, bytes_processed=10 * GB), ua.REASON_QUERIES),
+        ("free", INDIVIDUAL, ua.Usage(bytes_processed=10 * GB), ua.REASON_PROCESSED),
         # A card-less account is `free` on the account card: capped at 5x, not billed.
-        ("free", ACCOUNT, ua.Usage(queries=499, bytes_processed=int(4.99 * GB)), None),
-        ("free", ACCOUNT, ua.Usage(queries=500), ua.REASON_QUERIES),
+        ("free", ACCOUNT, ua.Usage(bytes_processed=int(4.99 * GB)), None),
         ("free", ACCOUNT, ua.Usage(bytes_processed=5 * GB), ua.REASON_PROCESSED),
-        ("payg", ACCOUNT, ua.Usage(queries=10_000, bytes_processed=10 * GB), None),
-        ("payg", INDIVIDUAL, ua.Usage(queries=10_000), None),
-        ("prepaid", INDIVIDUAL, ua.Usage(queries=10_000), None),
-        ("house", INDIVIDUAL, ua.Usage(queries=10_000), None),
+        ("payg", ACCOUNT, ua.Usage(bytes_processed=10 * GB), None),
+        ("payg", INDIVIDUAL, ua.Usage(bytes_processed=10 * GB), None),
+        ("prepaid", INDIVIDUAL, ua.Usage(bytes_processed=10 * GB), None),
+        ("house", INDIVIDUAL, ua.Usage(bytes_processed=10 * GB), None),
     ],
 )
 def test_decide(plan, card, usage, reason):
@@ -135,7 +132,6 @@ def test_decide(plan, card, usage, reason):
         (ua.Usage(), 0, None),
         # Already over still says so, not "this query".
         (ua.Usage(bytes_processed=5 * GB), 1, ua.REASON_PROCESSED),
-        (ua.Usage(queries=500), 1, ua.REASON_QUERIES),
     ],
 )
 def test_decide_on_the_query_figure(usage, query_bytes, reason):
@@ -156,19 +152,18 @@ def test_query_refusal_says_how_much_and_how_much_is_left():
 
 def test_standard_cards_match_the_live_rate_card():
     """1 GB/day individual, 5 GB/day account - as platform.pricing.rate_card since 2026-11-10."""
-    assert ua.daily_allowances(INDIVIDUAL) == {"queries": 100, "bytes_processed": GB}
-    assert ua.daily_allowances(ACCOUNT) == {"queries": 500, "bytes_processed": 5 * GB}
+    assert ua.daily_allowances(INDIVIDUAL) == {"bytes_processed": GB}
+    assert ua.daily_allowances(ACCOUNT) == {"bytes_processed": 5 * GB}
     assert ACCOUNT[ua.METER_PROCESSED]["included_units"] == 5.0
+    # Usage is data stored and data processed only: no query-count meter (OPX-3).
+    assert set(INDIVIDUAL) == set(ACCOUNT) == {ua.METER_PROCESSED}
 
 
 def test_refusal_says_which_limit_and_when_it_resets():
-    refusal = ua.decide("free", INDIVIDUAL, ua.Usage(queries=100), NOON)
-    assert "100 of today's 100 free queries" in refusal.message
-    assert "00:00 UTC, in 12 h 0 min" in refusal.message
-    assert refusal.retry_after == 12 * 3600
-
     refusal = ua.decide("free", INDIVIDUAL, ua.Usage(bytes_processed=int(1.2 * GB)), NOON)
     assert "processed 1.2 GB of today's 1 GB" in refusal.message
+    assert "00:00 UTC, in 12 h 0 min" in refusal.message
+    assert refusal.retry_after == 12 * 3600
 
 
 def test_the_day_is_the_utc_day():
@@ -194,17 +189,17 @@ def test_card_selection():
 
 def test_cardless_account_is_capped_at_the_account_allowance():
     # A billing account with no payment method resolves to `free` (it cannot be
-    # charged) but is still the 5x tier: capped at 500/5 GB, never billed.
+    # charged) but is still the 5x tier: capped at 5 GB, never billed.
     account = {"plan": "payg", "payment_method": None}
     plan = ua.effective_plan("acct_1", account)
     assert plan == "free"
     card_id = ua.card_id_for(plan, account)
     assert card_id == ua.STANDARD_ACCOUNT
     card = ua.STANDARD_CARDS[card_id]
-    assert ua.daily_allowances(card) == {"queries": 500, "bytes_processed": 5_000_000_000}
-    assert ua.decide(plan, card, ua.Usage(queries=499, bytes_processed=0), NOON) is None
-    refusal = ua.decide(plan, card, ua.Usage(queries=500, bytes_processed=0), NOON)
-    assert refusal is not None and refusal.reason == ua.REASON_QUERIES
+    assert ua.daily_allowances(card) == {"bytes_processed": 5_000_000_000}
+    assert ua.decide(plan, card, ua.Usage(bytes_processed=int(4.99 * GB)), NOON) is None
+    refusal = ua.decide(plan, card, ua.Usage(bytes_processed=5 * GB), NOON)
+    assert refusal is not None and refusal.reason == ua.REASON_PROCESSED
 
 
 @pytest.mark.parametrize("raw, mode", [(None, "enforce"), ("SHADOW", "shadow"), (" off ", "off"), ("x", "enforce")])
@@ -268,15 +263,20 @@ def test_counter_reads_and_increments():
     fs = _Firestore()
     assert ua.read_usage(fs, "alice", "20261110") == ua.Usage()
 
-    ua.count_admission(fs, "alice", "20261110")
-    ua.count_admission(fs, "alice", "20261110")
-    ua.add_bytes(fs, "alice", "20261110", 40_000_000)
+    ua.add_bytes(fs, "alice", "20261110", 30_000_000)
+    ua.add_bytes(fs, "alice", "20261110", 10_000_000)
 
-    assert ua.read_usage(fs, "alice", "20261110") == ua.Usage(queries=2, bytes_processed=40_000_000)
+    assert ua.read_usage(fs, "alice", "20261110") == ua.Usage(bytes_processed=40_000_000)
     assert ("billing_accounts", "alice", "usage", "20261110") in fs.docs
 
-    days = ua.read_usage_days(fs, "alice", ["20261109", "20261110"])
-    assert days == {"20261109": ua.Usage(), "20261110": ua.Usage(2, 40_000_000)}
+    # A counter day written before OPX-3 still carries `queries`; it is ignored.
+    fs.docs[("billing_accounts", "alice", "usage", "20261109")] = {"queries": 7, "bytes_processed": 5}
+    days = ua.read_usage_days(fs, "alice", ["20261108", "20261109", "20261110"])
+    assert days == {
+        "20261108": ua.Usage(),
+        "20261109": ua.Usage(bytes_processed=5),
+        "20261110": ua.Usage(bytes_processed=40_000_000),
+    }
 
 
 def test_read_card_prefers_the_projection_and_falls_back_to_standard():
@@ -285,7 +285,7 @@ def test_read_card_prefers_the_projection_and_falls_back_to_standard():
     assert ua.read_card(fs, "unknown-negotiated") is ua.STANDARD_CARDS[ua.STANDARD_INDIVIDUAL]
 
     ua.clear_cache()
-    projected = {ua.METER_QUERIES: dict(INDIVIDUAL[ua.METER_QUERIES], included_units=5)}
+    projected = {ua.METER_PROCESSED: dict(INDIVIDUAL[ua.METER_PROCESSED], included_units=5)}
     fs.docs[("rate_cards", ua.STANDARD_INDIVIDUAL)] = {"meters": projected}
     assert ua.read_card(fs, ua.STANDARD_INDIVIDUAL) == projected
 

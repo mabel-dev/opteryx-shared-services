@@ -186,7 +186,7 @@ within a day of being written.
 | `plans` | `effective_plan(account_id, account)` - the plan in force. The stored `plan` field is intent; never read it directly. |
 | `accounts` | `cached_account(account_id, client_factory)` - the `billing_accounts/{id}` read, cached for a minute and shared by the checks below |
 | `block` | `check(account_id, client_factory)` - `payment_failed` / `spend_cap_reached` / None, and the `MESSAGES` to refuse with |
-| `allowance` | the free tier's daily allowance: standard rate cards, the `billing_accounts/{account}/usage/{YYYYMMDD}` counter, `decide`, `count_admission`, `add_bytes` |
+| `allowance` | the free tier's daily allowance: standard rate cards, the `billing_accounts/{account}/usage/{YYYYMMDD}` counter, `decide`, `add_bytes` |
 
 Rules and Firestore reads/writes only. Where a check sits in the request path
 and how a refusal is reported (a 402, a `FlightUnauthorizedError`) stay with

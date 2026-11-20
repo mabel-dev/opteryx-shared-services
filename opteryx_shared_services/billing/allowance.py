@@ -10,12 +10,13 @@ Every query front door counts onto the same counter, so one day's allowance is
 shared between them:
 
     billing_accounts/{account}/usage/{YYYYMMDD}    (UTC day, accounts database)
-    { queries: int, bytes_processed: int, updated_at }
+    { bytes_processed: int, updated_at }
 
 A missing document reads as zero - on a daily grain that is the common case.
-Writes are ``Increment``s, never read-modify-write. Queries are counted when a
-door accepts one (``count_admission``); processed bytes are added once the
-query finishes (``add_bytes``), from the engine telemetry's ``billing_bytes``.
+Writes are ``Increment``s, never read-modify-write. Processed bytes are added
+once the query finishes (``add_bytes``), from the engine telemetry's
+``billing_bytes``. Usage is data stored and data processed only: queries are
+not counted (OPX-3).
 No reservations are taken, so nothing here can lock an account out by leaking
 one - the cost is that queries in flight at once can overshoot the data
 allowance by what they process.
@@ -57,7 +58,6 @@ MODE_OFF = "off"
 MODE_SHADOW = "shadow"
 MODE_ENFORCE = "enforce"
 
-METER_QUERIES = "query_execution"
 METER_PROCESSED = "data_processed"
 
 # The ledger and the cost model page use decimal gigabytes.
@@ -71,12 +71,6 @@ STANDARD_ACCOUNT = "standard-account"
 # 2026-11-10.
 STANDARD_CARDS = {
     STANDARD_INDIVIDUAL: {
-        METER_QUERIES: {
-            "included_units": 100,
-            "included_unit": "query",
-            "allowance_basis": "daily_total",
-            "on_exceed": "block",
-        },
         METER_PROCESSED: {
             "included_units": 1.0,
             "included_unit": "gigabyte",
@@ -85,12 +79,6 @@ STANDARD_CARDS = {
         },
     },
     STANDARD_ACCOUNT: {
-        METER_QUERIES: {
-            "included_units": 500,
-            "included_unit": "query",
-            "allowance_basis": "daily_total",
-            "on_exceed": "bill",
-        },
         METER_PROCESSED: {
             "included_units": 5.0,
             "included_unit": "gigabyte",
@@ -100,7 +88,6 @@ STANDARD_CARDS = {
     },
 }
 
-REASON_QUERIES = "daily_query_allowance"
 REASON_PROCESSED = "daily_data_allowance"
 # This query, not the account, is over: the account still has allowance left,
 # just not this much of it.
@@ -172,7 +159,6 @@ def read_card(db, card_id: str) -> dict:
 
 @dataclass(frozen=True)
 class Usage:
-    queries: int = 0
     bytes_processed: int = 0
 
 
@@ -191,10 +177,7 @@ def read_usage(db, account_id: str, day: str) -> Usage:
     """Today's settled usage. A missing document is zero. Not cached."""
     snap = counter_ref(db, account_id, day).get()
     data = (snap.to_dict() or {}) if snap.exists else {}
-    return Usage(
-        queries=int(data.get("queries") or 0),
-        bytes_processed=int(data.get("bytes_processed") or 0),
-    )
+    return Usage(bytes_processed=int(data.get("bytes_processed") or 0))
 
 
 def _allowance(meter: dict) -> Optional[float]:
@@ -251,17 +234,6 @@ def decide(
     resets = f"The allowance resets at 00:00 UTC, in {_format_wait(retry_after)}."
     lift = "To keep querying before then, set up billing on the billing page."
 
-    allowed_queries = _allowance(card.get(METER_QUERIES))
-    if allowed_queries is not None and usage.queries >= allowed_queries:
-        return Refusal(
-            reason=REASON_QUERIES,
-            message=(
-                f"Daily query allowance used: you have run {usage.queries} of today's "
-                f"{int(allowed_queries)} free queries. {resets} {lift}"
-            ),
-            retry_after=retry_after,
-        )
-
     allowed_bytes = _allowance(card.get(METER_PROCESSED))
     if allowed_bytes is not None and usage.bytes_processed >= allowed_bytes:
         return Refusal(
@@ -294,16 +266,6 @@ def decide(
     return None
 
 
-def count_admission(db, account_id: str, day: str) -> None:
-    """One more accepted query on today's counter."""
-    from google.cloud import firestore
-
-    counter_ref(db, account_id, day).set(
-        {"queries": firestore.Increment(1), "updated_at": firestore.SERVER_TIMESTAMP},
-        merge=True,
-    )
-
-
 def add_bytes(db, account_id: str, day: str, nbytes: int) -> None:
     """Settle a finished query's processed bytes onto the counter of the day it was admitted."""
     from google.cloud import firestore
@@ -318,16 +280,12 @@ def add_bytes(db, account_id: str, day: str, nbytes: int) -> None:
 
 
 def daily_allowances(card: dict) -> dict:
-    """`{"queries": n | None, "bytes_processed": n | None}` - None where the card has no daily allowance.
+    """`{"bytes_processed": n | None}` - None where the card has no daily allowance.
 
     For the free plan, where every daily allowance blocks (see `_allowance`).
     """
-    queries = _allowance(card.get(METER_QUERIES))
     processed = _allowance(card.get(METER_PROCESSED))
-    return {
-        "queries": int(queries) if queries is not None else None,
-        "bytes_processed": int(processed) if processed is not None else None,
-    }
+    return {"bytes_processed": int(processed) if processed is not None else None}
 
 
 def month_days(now: Optional[datetime.datetime] = None) -> list[str]:
@@ -344,10 +302,7 @@ def read_usage_days(db, account_id: str, days: list[str]) -> dict[str, Usage]:
     for snap in db.get_all(refs):
         if snap.exists:
             data = snap.to_dict() or {}
-            found[snap.id] = Usage(
-                queries=int(data.get("queries") or 0),
-                bytes_processed=int(data.get("bytes_processed") or 0),
-            )
+            found[snap.id] = Usage(bytes_processed=int(data.get("bytes_processed") or 0))
     return {day: found.get(day, Usage()) for day in days}
 
 
